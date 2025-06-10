@@ -8,7 +8,6 @@ import numpy as np
 from os import path
 import time
 import os
-import schedule
 
 logging.basicConfig(level=logging.INFO)
 pricing_logger = logging.getLogger(__name__)
@@ -112,25 +111,50 @@ def ler_dados(sheet_url: str, sheet_name: str, max_retries: int = 3) -> pd.DataF
                 pricing_logger.error(f"Failed to read sheet '{sheet_name}' after {max_retries} attempts: {str(e)}")
                 raise
 
-def calcula_buybox(loja='HAIRPRO'):
+def calcular_buybox(lojas=['HAIRPRO', 'Hair Pro Cosméticos']):
     start_time = time.time()
     results = []
     
     try:
-        response = requests.get("https://www.price.kamico.com.br/api/products/").json()
-        df = pd.DataFrame(response if isinstance(response, list) else [response])
-        df = df[['sku', 'loja', 'preco_final', 'descricao', 'marketplace']].copy()
+        # Requisição à API
+        response = requests.get("https://www.price.kamico.com.br/api/products/")
+        response.raise_for_status()  # Levanta exceção para códigos de status HTTP 4xx/5xx
+        data = response.json()
+        
+        # Verifica se a resposta é uma lista ou dicionário
+        if not isinstance(data, (list, dict)):
+            pricing_logger.error("Resposta da API não está no formato esperado (lista ou dicionário).")
+            return pd.DataFrame(), pd.DataFrame()
+        
+        # Converte para lista se for dicionário
+        df = pd.DataFrame(data if isinstance(data, list) else [data])
+        
+        # Verifica se as colunas necessárias existem
+        required_columns = ['sku', 'loja', 'preco_final', 'descricao', 'marketplace', 'status']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            pricing_logger.error(f"Colunas faltando na resposta da API: {missing_columns}")
+            return pd.DataFrame(), pd.DataFrame()
+        
+        # Seleciona apenas as colunas necessárias
+        df=df[df['status']=='ativo']
+        df = df[required_columns].copy()
+        
+        # Converte preco_final para numérico
         df['preco_final'] = pd.to_numeric(df['preco_final'], errors='coerce')
         
+        # Verifica se todos os preços são inválidos
         if df['preco_final'].isna().all():
             pricing_logger.error("Todos os valores de preco_final são inválidos.")
-            return pd.DataFrame()
+            return pd.DataFrame(), df
         
+        # Remove linhas com preços inválidos e loga aviso
         if df['preco_final'].isna().any():
             pricing_logger.warning("Alguns preços foram ignorados devido a valores inválidos.")
             df = df.dropna(subset=['preco_final'])
         
-        hairpro_skus = df[df['loja'] == loja]['sku'].unique()
+        # Filtra SKUs das lojas especificadas
+        hairpro_skus = df[df['loja'].isin(lojas)]['sku'].unique()
         
         for sku in hairpro_skus:
             group = df[df['sku'] == sku]
@@ -138,51 +162,66 @@ def calcula_buybox(loja='HAIRPRO'):
                 pricing_logger.warning(f"SKU {sku}: Não há preços suficientes para comparação.")
                 continue
             
+            # Ordena preços e obtém o menor e o segundo menor
             precos_ordenados = group['preco_final'].sort_values()
             min_price = precos_ordenados.iloc[0]
             second_min_price = precos_ordenados.iloc[1]
             buybox_loja = group.loc[group['preco_final'] == min_price, 'loja'].iloc[0]
             
-            hairpro_row = group[group['loja'] == loja]
-            preco_hairpro = hairpro_row['preco_final'].iloc[0]
-            descricao = hairpro_row['descricao'].iloc[0]
-            marketplace = hairpro_row['marketplace'].iloc[0]
-            
-            if preco_hairpro == min_price:
-                adjusted_price = second_min_price - 0.10
-                status = "Ganhando buybox"
-            else:
-                adjusted_price = min_price - 0.10
-                status = "Perdendo buybox"
-            
-            results.append({
-                'sku_seller': sku,
-                'descricao': descricao,
-                'preco_atual_hairpro': preco_hairpro,
-                'preco_minimo': min_price,
-                'segundo_preco_minimo': second_min_price,
-                'preco_para_buybox': adjusted_price,
-                'vencedor_buybox': buybox_loja,
-                'preco_buybox_atual': min_price,
-                'status': status,
-                'marketplace': marketplace
-            })
+            # Processa cada loja da lista
+            for loja in lojas:
+                hairpro_row = group[group['loja'] == loja]
+                if hairpro_row.empty:
+                    continue
+                
+                preco_hairpro = hairpro_row['preco_final'].iloc[0]
+                descricao = hairpro_row['descricao'].iloc[0]
+                marketplace = hairpro_row['marketplace'].iloc[0]
+                status = hairpro_row['status'].iloc[0]
+                
+                if preco_hairpro == min_price:
+                    adjusted_price = max(second_min_price - 0.10, 0.01)  # Evita preços negativos
+                    status_buybox = "Ganhando buybox"
+                else:
+                    adjusted_price = max(min_price - 0.10, 0.01)  # Evita preços negativos
+                    status_buybox = "Perdendo buybox"
+                
+                results.append({
+                    'sku_seller': sku,
+                    'loja': loja,
+                    'descricao': descricao,
+                    'preco_atual_hairpro': preco_hairpro,
+                    'preco_minimo': min_price,
+                    'segundo_preco_minimo': second_min_price,
+                    'preco_para_buybox': adjusted_price,
+                    'vencedor_buybox': buybox_loja,
+                    'preco_buybox_atual': min_price,
+                    'status_buybox': status_buybox,
+                    'marketplace': marketplace,
+                    'status': status
+                })
         
         result_df = pd.DataFrame(results)
         pricing_logger.info(f"Preços ajustados calculados em {time.time() - start_time:.2f} segundos.")
         return result_df, df
     
+    except requests.exceptions.RequestException as e:
+        pricing_logger.error(f"Erro na requisição à API: {str(e)}")
+        return pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        pricing_logger.error(f"Erro ao processar dados: {e}")
-        print(result_df.head())
-        print(df.head())
-        return pd.DataFrame()
+        pricing_logger.error(f"Erro ao processar dados: {str(e)}")
+        return pd.DataFrame(), pd.DataFrame()
+
+df_scrap = calcular_buybox()[0]
+df_scrap_blz=df_scrap[df_scrap['marketplace']=='Beleza na Web']
+df_scrap_blz=df_scrap_blz[df_scrap_blz['status']=='ativo']
 
 base_url = 'https://api.anymarket.com.br'
 anymarket_cred_path = path.join(os.getcwd(), '.env') 
 
 MARKETPLACE_IDS = {
-    "BELEZA_NA_WEB": "287287989"
+    "BELEZA_NA_WEB": "287287989",
+    "MERCADO_LIVRE": "275387715"
 }
 
 class AnymarketAPI:
@@ -361,23 +400,17 @@ def main_job():
     """Função principal que executa a lógica do código original."""
     try:
         # Calculate buybox and get the scraped dataframe
-        df_scrap = calcula_buybox()[0]
+        df_scrap = calcular_buybox()[0]
+        df_scrap=df_scrap[df_scrap['marketplace']=='Beleza na Web']
+        df_scrap=df_scrap[df_scrap['status']=='ativo']
 
-        # Send scraped data to Google Sheets
-        enviar_dados(
-            df_scrap,
-            "df_scrap",
-            "https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1636526557#gid=1636526557"
-        )
+        pdv_blz = ler_dados('https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1486126181#gid=1486126181','PDV beleza na web')
 
-        # Read PDV data from Google Sheets
-        df_PDV = ler_dados(
-            "https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1636526557#gid=1636526557",
-            "PDV beleza na web"
-        )
+        pdv_blz_fil=pdv_blz[['sku_beleza','PDV','SKU','STATUS','MARKETPLACE']].dropna(subset=['SKU','PDV','sku_beleza'])
 
-        # Filter active records and calculate pricing rule
-        df_pricing = df_PDV[df_PDV['STATUS'] == "ATIVO"]
+        df_scrap_pdv_blz = pd.merge(df_scrap_blz, pdv_blz_fil, left_on='sku_seller', right_on='sku_beleza', how='left')
+
+        df_pricing = df_scrap_pdv_blz[df_scrap_pdv_blz['STATUS'] == "ATIVO"]
         df_pricing['preco-regra'] = np.where(
             (df_pricing['PDV'].notnull()) & (df_pricing['preco_para_buybox'].notnull()) & (df_pricing['PDV'] < df_pricing['preco_para_buybox']),
             df_pricing['preco_para_buybox'],
@@ -386,31 +419,21 @@ def main_job():
         df_pricing = df_pricing[df_pricing["STATUS"] == "ATIVO"]
         df_pricing['preco-de'] = (df_pricing['preco-regra'] * 1.42).round(2)
 
-        # Select relevant columns
-        df_pricing = df_pricing[['SKU', 'sku_seller', 'PDV', 'preco_atual_hairpro', 'preco_minimo', 'segundo_preco_minimo', 'preco-regra', 'status','preco-de']]
-
         # Drop rows with NaN values
         df_pricing = df_pricing.dropna()
-
+        df_pricing['preco-regra']=df_pricing['preco-regra'].round(2)
         # Initialize Anymarket API
         api = AnymarketAPI()
-        df_pricing['MARKETPLACE'] = "BELEZA_NA_WEB"
-        print(df_PDV.columns)
-        print(df_pricing['preco-regra'])
 
         # Update prices via API
         for index, row in df_pricing.iterrows():
-            print(row['MARKETPLACE'])
             skuid = api.retorna_id(row['SKU'])
-            print(skuid)
             api.manual_pricing(skuid['data']['content'][0]['id'])
             skuid_marketplace = api.retorna_skuid_marketplaces(partner_id=row['SKU'], marketplace=row['MARKETPLACE'])
-            print(skuid_marketplace)
-            pricing = api.update_price(ad_id=skuid_marketplace['data']['skuid_marketplace'], new_price=row['preco-regra'], promo_price=row['preco-de'])
+            api.update_price(ad_id=skuid_marketplace['data']['skuid_marketplace'], new_price=row['preco-regra'], promo_price=row['preco-de'])
             # Adicionar print com SKU, preço de e preço regra
             print(f"SKU {row['SKU']} alterado: preço regra = {row['preco-regra']}, preço de = {row['preco-de']}")
             
-
         pricing_logger.info("Ciclo de execução concluído com sucesso.")
     except Exception as e:
         pricing_logger.error(f"Erro na execução do ciclo: {str(e)}")
