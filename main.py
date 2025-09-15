@@ -197,7 +197,7 @@ def calcular_buybox(lojas=['HAIRPRO', 'Hair Pro Cosméticos']):
 def main_job():
     """Função principal para executar o processo de precificação."""
     try:
-        dfs = ler_dados('https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1486126181#gid=1486126181', ['PDV beleza na web', 'PDV Meli'])
+        dfs = ler_dados('https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1486126181#gid=1486126181', ['PDV beleza na web', 'PDV Meli','PDV epoca'])
 
         df_scrap, _ = calcular_buybox()
         df_scrap = df_scrap[df_scrap['status'] == 'ativo']
@@ -219,10 +219,8 @@ def main_job():
         # Processamento para Mercado Livre
         df_scrap_meli = df_scrap[df_scrap['marketplace'] == 'Mercado Livre']
         pdv_meli = dfs['PDV Meli']
-        # Modificação: Garantir que apenas linhas com PDV preenchido (não nulo e não vazio) sejam consideradas
         pdv_meli_fil = pdv_meli[['sku_meli', 'PDV', 'SKU', 'STATUS', 'MARKETPLACE']].dropna(subset=['SKU', 'PDV', 'sku_meli'])
         pdv_meli_fil = pdv_meli_fil[pdv_meli_fil['PDV'].notnull() & (pdv_meli_fil['PDV'] != '')]
-        pricing_logger.info(f"Linhas filtradas com PDV preenchido para Mercado Livre: {len(pdv_meli_fil)}")
         df_scrap_pdv_meli = pd.merge(pdv_meli_fil, df_scrap_meli, left_on='sku_meli', right_on='sku_seller', how='left')
         df_pricing_meli = df_scrap_pdv_meli[df_scrap_pdv_meli['STATUS'] == "ATIVO"]
         df_pricing_meli['preco-regra'] = np.where(
@@ -233,20 +231,45 @@ def main_job():
         df_pricing_meli = df_pricing_meli[df_pricing_meli["STATUS"] == "ATIVO"]
         df_pricing_meli['preco-de'] = (df_pricing_meli['preco-regra'] * 1.20).round(2)
 
-        df_pricing_meli = df_pricing_meli[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
-        df_pricing_blz = df_pricing_blz[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
-        
-        if df_pricing_meli.empty:
-            df_meli_blz = df_pricing_blz
-        else:
-            df_meli_blz = pd.concat([df_pricing_meli, df_pricing_blz])
 
-        df_meli_blz = df_meli_blz[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
-        df_meli_blz['preco-regra'] = df_meli_blz['preco-regra'].round(2)
-        df_meli_blz['preco-de'] = df_meli_blz['preco-de'].round(2)
+        df_scrap_epoca = df_scrap[df_scrap['marketplace'] == 'Epoca Cosmeticos']
+        pdv_epoca = dfs['PDV epoca']
+        pdv_epoca_fil = pdv_epoca[['sku_epoca', 'PDV', 'SKU', 'STATUS', 'MARKETPLACE']].dropna(subset=['SKU', 'PDV', 'sku_epoca'])
+        pdv_epoca_fil = pdv_epoca_fil[pdv_epoca_fil['PDV'].notnull() & (pdv_epoca_fil['PDV'] != '')]
+        df_scrap_pdv_epoca = pd.merge(pdv_epoca_fil, df_scrap_epoca, left_on='sku_epoca', right_on='sku_seller', how='left')
+        df_pricing_epoca = df_scrap_pdv_epoca[df_scrap_pdv_epoca['STATUS'] == "ATIVO"]
+        df_pricing_epoca['preco-regra'] = np.where(
+        (df_pricing_epoca['PDV'].notnull()) & (df_pricing_epoca['preco_para_buybox'].notnull()) & (df_pricing_epoca['PDV'] < df_pricing_epoca['preco_para_buybox']),
+        df_pricing_epoca['preco_para_buybox'],
+        df_pricing_epoca['PDV']
+        )
+        df_pricing_epoca = df_pricing_epoca[df_pricing_epoca["STATUS"] == "ATIVO"]
+        df_pricing_epoca['preco-de'] = (df_pricing_epoca['preco-regra'] * 1.20).round(2)
+
+
+
+        df_pricing_meli=df_pricing_meli[['SKU','preco-regra','preco-de','MARKETPLACE']]
+        df_pricing_blz=df_pricing_blz[['SKU','preco-regra','preco-de','MARKETPLACE']]
+        df_pricing_epoca=df_pricing_epoca[['SKU','preco-regra','preco-de','MARKETPLACE']]
+        
+        if df_pricing_meli.empty and df_pricing_epoca.empty:
+            df_final = df_pricing_blz
+        elif df_pricing_meli.empty:
+            df_final = pd.concat([df_pricing_epoca, df_pricing_blz])
+        elif df_pricing_epoca.empty:
+            df_final = pd.concat([df_pricing_meli, df_pricing_blz])
+        else:
+            df_final = pd.concat([df_pricing_meli, df_pricing_blz, df_pricing_epoca])
+
+        # Ensure only the specified columns are kept
+        df_final = df_final[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
+
+        df_final = df_final[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
+        df_final['preco-regra'] = df_final['preco-regra'].round(2)
+        df_final['preco-de'] = df_final['preco-de'].round(2)
 
         api = AnymarketAPI()
-        for index, row in df_meli_blz.iterrows():
+        for index, row in df_final.iterrows():
             try:
                 sku = row['SKU']
                 marketplace = row['MARKETPLACE']
@@ -292,7 +315,8 @@ def main_job():
 
 MARKETPLACE_IDS = {
     "BELEZA_NA_WEB": "287287989",
-    "MERCADO_LIVRE": "275387715"
+    "MERCADO_LIVRE": "275387715",
+    "EPOCA": "275387715"
 }
 anymarket_cred_path = path.join(os.getcwd(), '.env')
 base_url = 'https://api.anymarket.com.br'
@@ -483,5 +507,31 @@ class AnymarketAPI:
                 "error": str(e)
             }
 
+    def retorna_marketplace_id(self, marketplace_name: str, sku: str) -> dict:
+        url = f"{self.base_url}/v2/skus/marketplaces"
+        querystring = {"partnerID": sku}
+        try:
+            response = requests.get(url, headers=self.headers, params=querystring)
+            response.raise_for_status()
+            data = response.json() if isinstance(response.json(), list) else response.json().get('data', [])
+            for marketplace in data:
+                if marketplace.get('marketPlace') == marketplace_name:
+                    marketplace_id = marketplace.get('id')
+                    return {
+                        "marketplace_name": marketplace_name,
+                        "status_code": response.status_code,
+                        "data": {"marketplace_id": marketplace_id}
+                    }
+            return {
+                "marketplace_name": marketplace_name,
+                "status_code": response.status_code,
+                "error": f"Marketplace {marketplace_name} não encontrado para partnerID WL008"
+            }
+        except requests.exceptions.RequestException as e:
+            return {
+                "marketplace_name": marketplace_name,
+                "status_code": getattr(e.response, 'status_code', None),
+                "error": str(e)
+            }
 if __name__ == "__main__":
     main_job()
