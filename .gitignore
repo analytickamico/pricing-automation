@@ -1,0 +1,47 @@
+# Environment variables - NEVER COMMIT
+.env
+.env.*
+.env_old
+
+# Credentials - CRITICAL SECURITY
+credentials.json
+token.json
+*.json
+!package.json
+!package-lock.json
+*credentials*
+*token*
+*secret*
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.Python
+env/
+venv/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/temp files
+test_*.sh
+*.old

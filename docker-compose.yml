@@ -1,0 +1,11 @@
+services:
+  pricing-automation:
+    build: .
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    network_mode: host
