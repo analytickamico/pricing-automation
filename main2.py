@@ -10,7 +10,7 @@ import time
 import os
 
 logging.basicConfig(level=logging.INFO)
-pricing_logger = logging.getLogger(__name__)
+pricing_logger = pricing_logger = logging.getLogger("NOVA_VERSAO_DEBUG")
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
 client = gspread.authorize(creds)
