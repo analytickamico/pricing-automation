@@ -467,8 +467,8 @@ class AnymarketAPI:
             headers['Content-Type'] = 'application/json'
             payload = [{
                 "id": ad_id,
-                "price": new_price,
-                "discountPrice": promo_price 
+                "price": promo_price,
+                "discountPrice": new_price 
             }]
             response = self._make_request('put', url, headers=headers, json=payload)
             return {
