@@ -272,10 +272,14 @@ def main_job():
                 pricing_response = api.update_price(ad_id=ad_id, new_price=preco_regra, promo_price=preco_de)
 
                 if pricing_response.get('error'):
-                    pricing_logger.error(f"Erro ao atualizar preço para SKU {sku}: {pricing_response.get('error')}")
+                    #Log de erro da API com status
+                    status_code = pricing_response.get('status_code','N/A')
+                    pricing_logger.error(f"Erro ao atualizar preço para SKU {sku} (Status:{status_code}). Erro: {pricing_response.get('error')}. Dados: {pricing_response.get('data','Sem dados')}")
                 else:
-                    pricing_logger.info(f"SKU {sku} alterado: preço regra = {preco_regra}, preço de = {preco_de}")
-
+                    # NOVO LOG DETALHADO DE SUCESSO
+                    status_code = pricing_response.get('status_code','N/A)
+                                                       api_data = pricing_response.get('data','Sem dados de resposta.')
+                    pricing_logger.info(f"SKU {sku} atualizado (Status Anymarket: {status_code}). Preços: Regra={preco_regra}, De={preco_de}. AD ID: {ad_id}. Resposta API: {api_data}")
             except requests.exceptions.Timeout:
                 pricing_logger.error(f"Timeout ao processar SKU {row['SKU']}. Pulando para o próximo.")
                 time.sleep(5)  # Pausa antes de continuar
