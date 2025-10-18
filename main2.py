@@ -277,7 +277,7 @@ def main_job():
                     pricing_logger.error(f"Erro ao atualizar preço para SKU {sku} (Status:{status_code}). Erro: {pricing_response.get('error')}. Dados: {pricing_response.get('data','Sem dados')}")
                 else:
                     # NOVO LOG DETALHADO DE SUCESSO
-                    status_code = pricing_response.get('status_code','N/A)
+                    status_code = pricing_response.get('status_code','N/A')
                     api_data = pricing_response.get('data','Sem dados de resposta.')
                     pricing_logger.info(f"SKU {sku} atualizado (Status Anymarket: {status_code}). Preços: Regra={preco_regra}, De={preco_de}. AD ID: {ad_id}. Resposta API: {api_data}")
             except requests.exceptions.Timeout:
