@@ -278,7 +278,7 @@ def main_job():
                 else:
                     # NOVO LOG DETALHADO DE SUCESSO
                     status_code = pricing_response.get('status_code','N/A)
-                                                       api_data = pricing_response.get('data','Sem dados de resposta.')
+                    api_data = pricing_response.get('data','Sem dados de resposta.')
                     pricing_logger.info(f"SKU {sku} atualizado (Status Anymarket: {status_code}). Preços: Regra={preco_regra}, De={preco_de}. AD ID: {ad_id}. Resposta API: {api_data}")
             except requests.exceptions.Timeout:
                 pricing_logger.error(f"Timeout ao processar SKU {row['SKU']}. Pulando para o próximo.")
