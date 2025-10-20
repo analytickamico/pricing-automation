@@ -15,6 +15,44 @@ scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis
 creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
 client = gspread.authorize(creds)
 
+# --- NOVA FUNÇÃO AUXILIAR PARA APLICAR A REGRA DE 30% ---
+def aplicar_limite_30_pct(df: pd.DataFrame, pdv_col: str, preco_regra_col: str, multiplicador_de: float):
+    """Ajusta o preco-regra para não exceder +/- 30% do PDV original."""
+    
+    # 1. Calcular Preço Máximo e Mínimo Permitido (30% de variação)
+    df['preco_max_permitido'] = df[pdv_col] * 1.30
+    df['preco_min_permitido'] = df[pdv_col] * 0.70
+    
+    # 2. Aplicar o Limite MÁXIMO
+    # Se o preco-regra exceder o máximo permitido (PDV * 1.30), usa-se o máximo permitido.
+    df[preco_regra_col] = np.where(
+        (df[preco_regra_col] > df['preco_max_permitido']),
+        df['preco_max_permitido'],
+        df[preco_regra_col]
+    )
+    
+    # 3. Aplicar o Limite MÍNIMO (opcional, mas seguro)
+    # Se o preco-regra cair abaixo do mínimo permitido (PDV * 0.70), usa-se o mínimo permitido.
+    df[preco_regra_col] = np.where(
+        (df[preco_regra_col] < df['preco_min_permitido']),
+        df['preco_min_permitido'],
+        df[preco_regra_col]
+    )
+    
+    # 4. Recalcular o preco-de com o novo preco-regra ajustado
+    df['preco-de'] = (df[preco_regra_col] * multiplicador_de).round(2)
+    
+    # Gerar logs de aviso para SKUs que foram ajustados
+    ajustados = df[(df[preco_regra_col] == df['preco_max_permitido']) | (df[preco_regra_col] == df['preco_min_permitido'])]
+    if not ajustados.empty:
+        for _, row in ajustados.iterrows():
+            pricing_logger.warning(
+                f"SKU {row['SKU']} ajustado: Preço calculado excedeu o limite de 30% do PDV ({row[pdv_col]}). Novo Preço Regra: {row[preco_regra_col]:.2f}"
+            )
+            
+    return df.drop(columns=['preco_max_permitido', 'preco_min_permitido'])
+
+
 def enviar_dados(df: pd.DataFrame, sheet_name: str, sheet_url: str):
     try:
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -195,7 +233,7 @@ def calcular_buybox(lojas=['HAIRPRO', 'Hair Pro Cosméticos']):
         return pd.DataFrame(), pd.DataFrame()
 
 def main_job():
-    """Função principal para executar o processo de precificação."""
+    """Função principal para executar o processo de precificação. Ajustada para incluir a regra de 30%"""
     try:
         dfs = ler_dados('https://docs.google.com/spreadsheets/d/1u7dCTQzbqgKSSjpSVtsUl7ea2j2YgW4Ko2nB9akE1ws/edit?gid=1486126181#gid=1486126181', ['PDV beleza na web', 'PDV Meli'])
 
@@ -214,7 +252,12 @@ def main_job():
             df_pricing_blz['PDV']
         )
         df_pricing_blz = df_pricing_blz[df_pricing_blz["STATUS"] == "ATIVO"]
-        df_pricing_blz['preco-de'] = (df_pricing_blz['preco-regra'] * 1.42).round(2)
+        # --- APLICAÇÃO DA REGRA DE LIMITE DE 30% (Beleza na Web) ---
+        df_pricing_blz = aplicar_limite_30_pct(
+            df=df_pricing_blz,
+            pdv_col='PDV',
+            preco_regra_col='preco-regra',
+            multiplicador_de=1.42)
 
         # Processamento para Mercado Livre
         df_scrap_meli = df_scrap[df_scrap['marketplace'] == 'Mercado Livre']
@@ -231,7 +274,8 @@ def main_job():
             df_pricing_meli['PDV']
         )
         df_pricing_meli = df_pricing_meli[df_pricing_meli["STATUS"] == "ATIVO"]
-        df_pricing_meli['preco-de'] = (df_pricing_meli['preco-regra'] * 1.20).round(2)
+        # --- APLICAÇÃO DA REGRA DE LIMITE DE 30% (Mercado Livre) ---
+        df_pricing_meli = aplicar_limite_30_pct(df=df_pricing_meli, pdv_col='PDV', preco_regra_col='preco-regra', multiplicador_de=1.20)
 
         df_pricing_meli = df_pricing_meli[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
         df_pricing_blz = df_pricing_blz[['SKU', 'preco-regra', 'preco-de', 'MARKETPLACE']]
